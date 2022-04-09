@@ -1,0 +1,149 @@
+import pickle
+
+import selenium.common.exceptions
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from webdrivermanager.chrome import ChromeDriverManager
+from selenium.webdriver.common.desired_capabilities import DesiredCapabilities
+from bs4 import BeautifulSoup
+from urllib.parse import urlencode
+import json
+import requests
+from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.select import Select
+from selenium.webdriver.support.wait import WebDriverWait
+import time
+import pandas as pd
+from seleniumwire import webdriver
+from selenium.webdriver.common.action_chains import ActionChains
+from random import randint
+from time import sleep
+from openpyxl import load_workbook
+
+"""
+IMPORTANT: THIS IS NOT THE RECOMMENDED APPROACH, WE RECOMMEND YOU USE THE PROXY PORT 
+-------
+SCRAPER SETTINGS
+You need to define the following values below:
+- API_KEY --> Find this on your dashboard, or signup here to create a 
+                free account here https://dashboard.scraperapi.com/signup
+- RETRY_TIMES  --> We recommend setting this to 2-3 retries, in case a request fails. 
+                For most sites 95% of your requests will be successful on the first try,
+                and 99% after 3 retries. 
+"""
+
+
+NUM_RETRIES = 4
+
+def get_status(logs):
+    for log in logs:
+        if log['message']:
+            d = json.loads(log['message'])
+            try:
+                content_type = 'text/html' in d['message']['params']['response']['headers']['content-type']
+                response_received = d['message']['method'] == 'Network.responseReceived'
+                if content_type and response_received:
+                    return d['message']['params']['response']['status']
+            except:
+                pass
+
+
+
+def browser(url):
+    ## optional --> define Selenium options
+    #API_KEY = 'put api key here'
+    option = {
+        "proxy": {
+            "http":
+                f"http://scraperapi.render=true.country_code=us.ultra_premium=true:{API_KEY}@proxy-"
+                f"server.scraperapi.com:8001", "verify_ssl": False,
+        },
+    }
+    option = webdriver.ChromeOptions()
+    #option.add_argument('--headless')  ## --> comment out to see the browser launch.
+    option.add_argument('--no-sandbox')
+    option.add_argument('--disable-dev-sh-usage')
+
+    ## enable Selenium logging
+
+    capabilities = DesiredCapabilities.CHROME.copy()
+    capabilities['goog:loggingPrefs'] = {'performance': 'ALL'}
+    path ='/Users/mac/bin/chromedriver'
+    s = Service(path)
+    ## set up Selenium Chrome driver
+    driver = webdriver.Chrome(options=option,service=s,desired_capabilities=capabilities)
+    driver.minimize_window()
+    driver.get(url)
+    return driver
+#for url in url_list:
+url = 'https://www.betika.com/live/soccer'
+teams = []
+teams2 = []
+x12 = []
+btts = []
+odds_events = []
+#for sk in sku:
+for _ in range(15):
+    try:
+        #driver.get(get_scraperapi_url(url))
+        driver = browser(url)
+        #logs = driver.get_log('performance')
+        logs = driver.get_log('performance')
+        status_code = get_status(logs)
+        if status_code in [200, 404]:
+            ## escape for loop if the API returns a successful response
+            break
+    except requests.exceptions.ConnectionError:
+        print('failed')
+        driver.close()
+
+pd.set_option('display.max_rows', 6000)
+pd.set_option('display.max_columns', 500)
+pd.set_option('display.width', 1000)
+
+if status_code == 200:
+    xpath = '//div[@class = "match-filters__container"]//div[@class="match-filters__right"]/div[2]'
+    xpath2 = '//div[contains(@class, "modal__container auto")]' \
+             '//div[@class="match-filter__group__actions"]/button[contains(.,"Both Teams To Score")]'
+    dropdown = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.XPATH,xpath))).click()
+    bteams = WebDriverWait(driver,10).until(EC.presence_of_element_located((By.XPATH,xpath2))).click()
+    time.sleep(5)
+    html = driver.page_source
+    soup = BeautifulSoup(html, 'lxml')
+    matches = soup.find('div', class_='live__matches')
+    games = matches.find_all('div', class_='live-match')
+    for game in games:
+        row = game.find('div', class_='live-match__odd-market__container')
+        home = row.find('a', class_='live-match__teams__home')
+        team_H = home.find_all('span')
+        team_H = team_H[1].text.strip()
+        away = row.find('a', class_='live-match__teams__away')
+        team_A = away.find_all('span')
+        team_A = team_A[1].text.strip()
+        odds = game.find('div', class_='live-match__odds__container')
+        odds = odds.find_all('button')
+        yes_Odd = odds[0].span.text.strip()
+        no_Odd = odds[1].span.text.strip()
+        teams.append(f'{team_H} v {team_A}')
+        btts.append(f'{yes_Odd}\n{no_Odd}')
+        #print(teams)
+        #print(btts)
+    #print(matches.prettify())
+    driver.close()
+
+pd.set_option('display.max_rows', 200)
+pd.set_option('display.max_columns', 500)
+pd.set_option('display.width', 1000)
+
+#Storing lists within dictonary
+dict_gambling = {'Teams': teams, 'btts': btts}
+df_betika = pd.DataFrame.from_dict(dict_gambling, orient='index')
+df_betika = df_betika.transpose()
+#print(df_betika)
+
+output = open('df_betika', 'wb')
+pickle.dump(df_betika, output)
+output.close()
+#print(df_betika)
